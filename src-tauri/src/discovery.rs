@@ -128,12 +128,32 @@ pub fn start_discovery_loop(
                 }
             }
 
-            // Detect new agents
+            // Detect new agents or session changes
             for agent in &discovered {
                 if disc.key_to_id.contains_key(&agent.stable_key) {
-                    // Update shell PID in case it changed (tab reordering)
                     if let Some(&id) = disc.key_to_id.get(&agent.stable_key) {
                         disc.id_to_shell_pid.insert(id, agent.shell_pid);
+
+                        // Detect session change (e.g., /clear or initial race condition)
+                        let stored = disc.id_to_session.get(&id).map(|s| s.as_str());
+                        if stored != Some(&agent.session_id) {
+                            disc.id_to_session.insert(id, agent.session_id.clone());
+
+                            // Clear old UI state and re-register watcher with new session
+                            let _ = app.emit(
+                                "agentToolsClear",
+                                json!({"type":"agentToolsClear","id":id}),
+                            );
+                            jsonl_watcher::unregister_agent(&jsonl_watcher, id);
+                            let project_dir = project::get_project_dir(&agent.cwd);
+                            jsonl_watcher::register_agent(
+                                &jsonl_watcher,
+                                id,
+                                &agent.session_id,
+                                &project_dir,
+                                &app,
+                            );
+                        }
                     }
                     continue;
                 }

@@ -15,7 +15,7 @@ const BASH_COMMAND_DISPLAY_MAX_LENGTH: usize = 30;
 const TASK_DESCRIPTION_DISPLAY_MAX_LENGTH: usize = 40;
 const TAIL_READ_BYTES: u64 = 65536;
 
-const PERMISSION_EXEMPT_TOOLS: &[&str] = &["Task", "AskUserQuestion"];
+const PERMISSION_EXEMPT_TOOLS: &[&str] = &["Task", "Agent", "AskUserQuestion"];
 
 fn is_exempt(tool_name: &str) -> bool {
     PERMISSION_EXEMPT_TOOLS.contains(&tool_name)
@@ -109,7 +109,7 @@ fn format_tool_status(tool_name: &str, input: &Value) -> String {
         "Grep" => "Searching code".to_string(),
         "WebFetch" => "Fetching web content".to_string(),
         "WebSearch" => "Searching the web".to_string(),
-        "Task" => {
+        "Task" | "Agent" => {
             let desc = input["description"].as_str().unwrap_or("");
             if desc.is_empty() {
                 "Running subtask".to_string()
@@ -194,8 +194,8 @@ fn process_line(agent: &mut AgentWatchState, line: &str, app: &AppHandle) {
                     for block in arr {
                         if block["type"].as_str() == Some("tool_result") {
                             if let Some(tool_use_id) = block["tool_use_id"].as_str() {
-                                // If completed tool was Task, clear sub-agent tools
-                                if agent.active_tool_names.get(tool_use_id).map(|s| s.as_str()) == Some("Task") {
+                                // If completed tool was Task/Agent, clear sub-agent tools
+                                if agent.active_tool_names.get(tool_use_id).map_or(false, |s| is_subtask_tool(s)) {
                                     agent.active_subagent_tool_ids.remove(tool_use_id);
                                     agent.active_subagent_tool_names.remove(tool_use_id);
                                     let _ = app.emit("subagentClear", json!({
@@ -260,6 +260,10 @@ fn process_line(agent: &mut AgentWatchState, line: &str, app: &AppHandle) {
     }
 }
 
+fn is_subtask_tool(name: &str) -> bool {
+    name == "Task" || name == "Agent"
+}
+
 fn process_progress(agent: &mut AgentWatchState, record: &Value, app: &AppHandle) {
     let parent_tool_id = match record["parentToolUseID"].as_str() {
         Some(s) => s,
@@ -278,8 +282,25 @@ fn process_progress(agent: &mut AgentWatchState, record: &Value, app: &AppHandle
         return;
     }
 
-    // Only handle agent_progress for Task tools
-    if agent.active_tool_names.get(parent_tool_id).map(|s| s.as_str()) != Some("Task") {
+    // If parent tool not tracked (e.g., tool_use was outside replay_tail window),
+    // infer it from the progress record and reconstruct state
+    if data_type == "agent_progress" && !agent.active_tool_names.contains_key(parent_tool_id) {
+        agent.active_tool_ids.insert(parent_tool_id.to_string());
+        agent.active_tool_names.insert(parent_tool_id.to_string(), "Agent".to_string());
+        agent.active_tool_statuses.insert(parent_tool_id.to_string(), "Running subtask".to_string());
+        agent.had_tools_in_turn = true;
+        let _ = app.emit("agentStatus", json!({"type":"agentStatus","id":agent_id,"status":"active"}));
+        let _ = app.emit("agentToolStart", json!({
+            "type": "agentToolStart",
+            "id": agent_id,
+            "toolId": parent_tool_id,
+            "status": "Running subtask",
+        }));
+    }
+
+    // Only handle agent_progress for Task/Agent tools
+    let parent_tool = agent.active_tool_names.get(parent_tool_id).map(|s| s.as_str());
+    if !parent_tool.map_or(false, is_subtask_tool) {
         return;
     }
 
