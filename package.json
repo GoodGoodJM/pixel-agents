@@ -13,7 +13,11 @@
     "tauri:dev": "cargo tauri dev",
     "tauri:build": "cargo tauri build",
     "build:webview": "cd webview-ui && npm run build",
-    "import-tileset": "tsx scripts/import-tileset-cli.ts"
+    "import-tileset": "tsx scripts/import-tileset-cli.ts",
+    "assemble": "tsx scripts/assemble-sprites.ts",
+    "assemble:characters": "tsx scripts/assemble-characters.ts",
+    "assemble:floors": "tsx scripts/assemble-floors.ts",
+    "assemble:walls": "tsx scripts/assemble-walls.ts"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
