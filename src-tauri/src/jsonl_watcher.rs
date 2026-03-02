@@ -11,6 +11,7 @@ const JSONL_POLL_INTERVAL_MS: u64 = 1000;
 const TOOL_DONE_DELAY_MS: u64 = 300;
 const PERMISSION_TIMER_DELAY_MS: u64 = 7000;
 const TEXT_IDLE_DELAY_MS: u64 = 5000;
+const WAITING_DELAY_MS: u64 = 3000;
 const BASH_COMMAND_DISPLAY_MAX_LENGTH: usize = 30;
 const TASK_DESCRIPTION_DISPLAY_MAX_LENGTH: usize = 40;
 const TAIL_READ_BYTES: u64 = 65536;
@@ -32,6 +33,8 @@ struct AgentWatchState {
     active_subagent_tool_ids: HashMap<String, HashSet<String>>,
     active_subagent_tool_names: HashMap<String, HashMap<String, String>>,
     is_waiting: bool,
+    /// turn_duration arrived but we haven't confirmed the agent is truly idle yet
+    pending_waiting: bool,
     permission_sent: bool,
     had_tools_in_turn: bool,
 }
@@ -49,6 +52,7 @@ impl AgentWatchState {
             active_subagent_tool_ids: HashMap::new(),
             active_subagent_tool_names: HashMap::new(),
             is_waiting: false,
+            pending_waiting: false,
             permission_sent: false,
             had_tools_in_turn: false,
         }
@@ -61,6 +65,7 @@ impl AgentWatchState {
         self.active_subagent_tool_ids.clear();
         self.active_subagent_tool_names.clear();
         self.is_waiting = false;
+        self.pending_waiting = false;
         self.permission_sent = false;
     }
 
@@ -242,15 +247,15 @@ fn process_line(agent: &mut AgentWatchState, line: &str, app: &AppHandle) {
         }
         "system" => {
             if record["subtype"].as_str() == Some("turn_duration") {
-                // Definitive turn-end
+                // Turn ended — clear tools but delay the "waiting" notification
+                // to avoid false alarms when the agent immediately starts a new turn
                 if !agent.active_tool_ids.is_empty() {
                     agent.clear_activity();
                     let _ = app.emit("agentToolsClear", json!({"type":"agentToolsClear","id":agent_id}));
                 }
-                agent.is_waiting = true;
+                agent.pending_waiting = true;
                 agent.permission_sent = false;
                 agent.had_tools_in_turn = false;
-                let _ = app.emit("agentStatus", json!({"type":"agentStatus","id":agent_id,"status":"waiting"}));
             }
         }
         "progress" => {
@@ -408,7 +413,8 @@ fn read_new_lines(agent: &mut AgentWatchState, app: &AppHandle) -> bool {
 
     let has_data = lines.iter().any(|l| !l.trim().is_empty());
     if has_data {
-        // New data arriving -- clear permission state
+        // New data arriving -- cancel pending waiting and clear permission state
+        agent.pending_waiting = false;
         if agent.permission_sent {
             agent.permission_sent = false;
             let _ = app.emit("agentToolPermissionClear", json!({"type":"agentToolPermissionClear","id":agent.id}));
@@ -435,6 +441,8 @@ pub struct JsonlWatcherState {
     no_data_ticks: HashMap<i32, u64>,
     /// Ticks since last data for text-idle timer
     text_idle_ticks: HashMap<i32, u64>,
+    /// Ticks since turn_duration for delayed waiting notification
+    waiting_ticks: HashMap<i32, u64>,
 }
 
 pub type SharedJsonlWatcher = Arc<Mutex<JsonlWatcherState>>;
@@ -445,6 +453,7 @@ pub fn new_shared() -> SharedJsonlWatcher {
         pending: HashMap::new(),
         no_data_ticks: HashMap::new(),
         text_idle_ticks: HashMap::new(),
+        waiting_ticks: HashMap::new(),
     }))
 }
 
@@ -550,6 +559,7 @@ pub fn unregister_agent(watcher: &SharedJsonlWatcher, agent_id: i32) {
     state.pending.remove(&agent_id);
     state.no_data_ticks.remove(&agent_id);
     state.text_idle_ticks.remove(&agent_id);
+    state.waiting_ticks.remove(&agent_id);
 }
 
 /// Start the polling loop. Call this once after creating the watcher.
@@ -584,7 +594,25 @@ pub fn start_poll_loop(watcher: SharedJsonlWatcher, app: AppHandle) {
                 if had_data {
                     state.no_data_ticks.remove(&agent_id);
                     state.text_idle_ticks.remove(&agent_id);
+                    state.waiting_ticks.remove(&agent_id);
                 } else {
+                    // Waiting delay: confirm agent is truly idle after turn_duration
+                    let agent = state.agents.get(&agent_id).unwrap();
+                    if agent.pending_waiting && !agent.is_waiting {
+                        let ticks = state.waiting_ticks.entry(agent_id).or_insert(0);
+                        *ticks += JSONL_POLL_INTERVAL_MS;
+                        if *ticks >= WAITING_DELAY_MS {
+                            state.waiting_ticks.remove(&agent_id);
+                            let agent = state.agents.get_mut(&agent_id).unwrap();
+                            agent.pending_waiting = false;
+                            agent.is_waiting = true;
+                            let _ = app.emit("agentStatus", json!({
+                                "type": "agentStatus",
+                                "id": agent_id,
+                                "status": "waiting",
+                            }));
+                        }
+                    }
                     // Permission timer: count ticks without data
                     let agent = state.agents.get(&agent_id).unwrap();
                     if agent.has_non_exempt_tools() && !agent.permission_sent {
