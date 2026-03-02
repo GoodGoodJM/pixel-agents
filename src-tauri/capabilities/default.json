@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nickelpack/tauri/refs/heads/v2/crates/tauri-utils/schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for Pixel Agents",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:default",
+    "window-state:default"
+  ]
+}

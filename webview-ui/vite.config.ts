@@ -8,4 +8,9 @@ export default defineConfig({
     emptyOutDir: true,
   },
   base: './',
+  server: {
+    strictPort: true,
+    port: 5173,
+  },
+  clearScreen: false,
 })

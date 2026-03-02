@@ -7,37 +7,18 @@ import { buildDynamicCatalog } from '../office/layout/furnitureCatalog.js'
 import { setFloorSprites } from '../office/floorTiles.js'
 import { setWallSprites } from '../office/wallTiles.js'
 import { setCharacterTemplates } from '../office/sprites/spriteData.js'
-import { vscode } from '../vscodeApi.js'
+import { platform } from '../platform.js'
 import { playDoneSound, setSoundEnabled } from '../notificationSound.js'
+import { loadCharacterSprites, loadWallTiles, loadFloorTiles, loadFurnitureAssets } from '../assets/assetLoader.js'
+import type { FurnitureAsset } from '../assets/assetLoader.js'
+
+export type { FurnitureAsset }
 
 export interface SubagentCharacter {
   id: number
   parentAgentId: number
   parentToolId: string
   label: string
-}
-
-export interface FurnitureAsset {
-  id: string
-  name: string
-  label: string
-  category: string
-  file: string
-  width: number
-  height: number
-  footprintW: number
-  footprintH: number
-  isDesk: boolean
-  canPlaceOnWalls: boolean
-  partOfGroup?: boolean
-  groupId?: string
-  canPlaceOnSurfaces?: boolean
-  backgroundTiles?: number
-}
-
-export interface WorkspaceFolder {
-  name: string
-  path: string
 }
 
 export interface ExtensionMessageState {
@@ -49,7 +30,6 @@ export interface ExtensionMessageState {
   subagentCharacters: SubagentCharacter[]
   layoutReady: boolean
   loadedAssets?: { catalog: FurnitureAsset[]; sprites: Record<string, string[][]> }
-  workspaceFolders: WorkspaceFolder[]
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -58,7 +38,7 @@ function saveAgentSeats(os: OfficeState): void {
     if (ch.isSubagent) continue
     seats[ch.id] = { palette: ch.palette, hueShift: ch.hueShift, seatId: ch.seatId }
   }
-  vscode.postMessage({ type: 'saveAgentSeats', seats })
+  platform.postMessage({ type: 'saveAgentSeats', seats })
 }
 
 export function useExtensionMessages(
@@ -74,7 +54,6 @@ export function useExtensionMessages(
   const [subagentCharacters, setSubagentCharacters] = useState<SubagentCharacter[]>([])
   const [layoutReady, setLayoutReady] = useState(false)
   const [loadedAssets, setLoadedAssets] = useState<{ catalog: FurnitureAsset[]; sprites: Record<string, string[][]> } | undefined>()
-  const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>([])
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
   const layoutReadyRef = useRef(false)
@@ -83,8 +62,8 @@ export function useExtensionMessages(
     // Buffer agents from existingAgents until layout is loaded
     let pendingAgents: Array<{ id: number; palette?: number; hueShift?: number; seatId?: string; folderName?: string }> = []
 
-    const handler = (e: MessageEvent) => {
-      const msg = e.data
+    const handler = (payload: unknown) => {
+      const msg = payload as Record<string, unknown>
       const os = getOfficeState()
 
       if (msg.type === 'layoutLoaded') {
@@ -146,20 +125,17 @@ export function useExtensionMessages(
         setSubagentCharacters((prev) => prev.filter((s) => s.parentAgentId !== id))
         os.removeAgent(id)
       } else if (msg.type === 'existingAgents') {
-        const incoming = msg.agents as number[]
-        const meta = (msg.agentMeta || {}) as Record<number, { palette?: number; hueShift?: number; seatId?: string }>
-        const folderNames = (msg.folderNames || {}) as Record<number, string>
+        const incoming = msg.agents as Array<{ id: number; sessionId?: string; palette?: number; hueShift?: number; seatId?: string }>
         // Buffer agents — they'll be added in layoutLoaded after seats are built
-        for (const id of incoming) {
-          const m = meta[id]
-          pendingAgents.push({ id, palette: m?.palette, hueShift: m?.hueShift, seatId: m?.seatId, folderName: folderNames[id] })
+        for (const a of incoming) {
+          pendingAgents.push({ id: a.id, palette: a.palette, hueShift: a.hueShift, seatId: a.seatId })
         }
         setAgents((prev) => {
           const ids = new Set(prev)
           const merged = [...prev]
-          for (const id of incoming) {
-            if (!ids.has(id)) {
-              merged.push(id)
+          for (const a of incoming) {
+            if (!ids.has(a.id)) {
+              merged.push(a.id)
             }
           }
           return merged.sort((a, b) => a - b)
@@ -216,9 +192,6 @@ export function useExtensionMessages(
         setSubagentCharacters((prev) => prev.filter((s) => s.parentAgentId !== id))
         os.setAgentTool(id, null)
         os.clearPermissionBubble(id)
-      } else if (msg.type === 'agentSelected') {
-        const id = msg.id as number
-        setSelectedAgent(id)
       } else if (msg.type === 'agentStatus') {
         const id = msg.id as number
         const status = msg.status as string
@@ -324,41 +297,38 @@ export function useExtensionMessages(
         // Remove sub-agent character
         os.removeSubagent(id, parentToolId)
         setSubagentCharacters((prev) => prev.filter((s) => !(s.parentAgentId === id && s.parentToolId === parentToolId)))
-      } else if (msg.type === 'characterSpritesLoaded') {
-        const characters = msg.characters as Array<{ down: string[][][]; up: string[][][]; right: string[][][] }>
-        console.log(`[Webview] Received ${characters.length} pre-colored character sprites`)
-        setCharacterTemplates(characters)
-      } else if (msg.type === 'floorTilesLoaded') {
-        const sprites = msg.sprites as string[][][]
-        console.log(`[Webview] Received ${sprites.length} floor tile patterns`)
-        setFloorSprites(sprites)
-      } else if (msg.type === 'wallTilesLoaded') {
-        const sprites = msg.sprites as string[][][]
-        console.log(`[Webview] Received ${sprites.length} wall tile sprites`)
-        setWallSprites(sprites)
-      } else if (msg.type === 'workspaceFolders') {
-        const folders = msg.folders as WorkspaceFolder[]
-        setWorkspaceFolders(folders)
       } else if (msg.type === 'settingsLoaded') {
         const soundOn = msg.soundEnabled as boolean
         setSoundEnabled(soundOn)
-      } else if (msg.type === 'furnitureAssetsLoaded') {
-        try {
-          const catalog = msg.catalog as FurnitureAsset[]
-          const sprites = msg.sprites as Record<string, string[][]>
-          console.log(`📦 Webview: Loaded ${catalog.length} furniture assets`)
-          // Build dynamic catalog immediately so getCatalogEntry() works when layoutLoaded arrives next
-          buildDynamicCatalog({ catalog, sprites })
-          setLoadedAssets({ catalog, sprites })
-        } catch (err) {
-          console.error(`❌ Webview: Error processing furnitureAssetsLoaded:`, err)
-        }
       }
     }
-    window.addEventListener('message', handler)
-    vscode.postMessage({ type: 'webviewReady' })
-    return () => window.removeEventListener('message', handler)
+    const unlisten = platform.onMessage(handler)
+
+    // Load assets directly from frontend (no backend needed)
+    const assetsBase = `${window.location.origin}/assets`
+    Promise.all([
+      loadCharacterSprites(assetsBase).then((chars) => {
+        setCharacterTemplates(chars)
+      }).catch((err) => console.warn('[AssetLoader] Character sprites:', err)),
+      loadWallTiles(assetsBase).then((sprites) => {
+        setWallSprites(sprites)
+      }).catch((err) => console.warn('[AssetLoader] Wall tiles:', err)),
+      loadFloorTiles(assetsBase).then((sprites) => {
+        if (sprites) setFloorSprites(sprites)
+      }).catch((err) => console.warn('[AssetLoader] Floor tiles:', err)),
+      loadFurnitureAssets(assetsBase).then((result) => {
+        if (result) {
+          buildDynamicCatalog(result)
+          setLoadedAssets(result)
+        }
+      }).catch((err) => console.warn('[AssetLoader] Furniture:', err)),
+    ]).then(() => {
+      // After assets are loaded, notify backend we're ready
+      platform.postMessage({ type: 'webviewReady' })
+    })
+
+    return unlisten
   }, [getOfficeState])
 
-  return { agents, selectedAgent, agentTools, agentStatuses, subagentTools, subagentCharacters, layoutReady, loadedAssets, workspaceFolders }
+  return { agents, selectedAgent, agentTools, agentStatuses, subagentTools, subagentCharacters, layoutReady, loadedAssets }
 }

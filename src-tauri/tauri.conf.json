@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nickelpack/tauri/refs/heads/v2/crates/tauri-utils/schema.json",
+  "productName": "Pixel Agents",
+  "version": "1.0.0",
+  "identifier": "com.pixelagents.app",
+  "build": {
+    "beforeDevCommand": { "script": "npm run dev", "cwd": "../webview-ui" },
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": { "script": "npm run build", "cwd": "../webview-ui" },
+    "frontendDist": "../dist/webview"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Pixel Agents",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  },
+  "plugins": {}
+}

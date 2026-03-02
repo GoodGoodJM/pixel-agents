@@ -13,7 +13,6 @@ interface ToolOverlayProps {
   containerRef: React.RefObject<HTMLDivElement | null>
   zoom: number
   panRef: React.RefObject<{ x: number; y: number }>
-  onCloseAgent: (id: number) => void
 }
 
 /** Derive a short human-readable activity string from tools/status */
@@ -48,7 +47,6 @@ export function ToolOverlay({
   containerRef,
   zoom,
   panRef,
-  onCloseAgent,
 }: ToolOverlayProps) {
   const [, setTick] = useState(0)
   useEffect(() => {
@@ -149,7 +147,7 @@ export function ToolOverlay({
                   ? '2px solid var(--pixel-border-light)'
                   : '2px solid var(--pixel-border)',
                 borderRadius: 0,
-                padding: isSelected ? '3px 6px 3px 8px' : '3px 8px',
+                padding: '3px 8px',
                 boxShadow: 'var(--pixel-shadow)',
                 whiteSpace: 'nowrap',
                 maxWidth: 220,
@@ -172,7 +170,7 @@ export function ToolOverlay({
                   style={{
                     fontSize: isSub ? '20px' : '22px',
                     fontStyle: isSub ? 'italic' : undefined,
-                    color: 'var(--vscode-foreground)',
+                    color: 'var(--pixel-text)',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     display: 'block',
@@ -194,34 +192,6 @@ export function ToolOverlay({
                   </span>
                 )}
               </div>
-              {isSelected && !isSub && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onCloseAgent(id)
-                  }}
-                  title="Close agent"
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: 'var(--pixel-close-text)',
-                    cursor: 'pointer',
-                    padding: '0 2px',
-                    fontSize: '26px',
-                    lineHeight: 1,
-                    marginLeft: 2,
-                    flexShrink: 0,
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.color = 'var(--pixel-close-hover)'
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.color = 'var(--pixel-close-text)'
-                  }}
-                >
-                  ×
-                </button>
-              )}
             </div>
           </div>
         )
