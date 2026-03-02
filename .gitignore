@@ -8,3 +8,4 @@ node_modules
 /sprites-export
 .env
 src-tauri/target/
+raw-sprites/
